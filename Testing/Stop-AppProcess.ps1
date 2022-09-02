@@ -1,10 +1,22 @@
 Function Stop-AppProcess {
-    Param(
+    [CmdletBinding(
+        ConfirmImpact = 'Medium',
+        SupportsShouldProcess = $True,
+        PositionalBinding = $True,
+        DefaultParameterSetName = 'Programs'
+    )] Param(
+        [Parameter(Mandatory = $True, ParameterSetName = 'Programs')]
+        [Parameter(Mandatory = $False, ParameterSetName = 'ProgramDirs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'Both')]
         [Array]$Programs,
-        [Array]$ProgramDirs
+        [Parameter(Mandatory = $False, ParameterSetName = 'Programs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'ProgramDirs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'Both')]
+        [Array]$ProgramDirs,
+        [Switch]$Force
     )
 
-    #Initalize needed variables
+    Write-Verbose -Message:'Initializing Variables.'
     @('Processes','TargetProcesses') | ForEach-Object -Process:{
         New-Variable -Name:$_ -Value:$Null -Force -Scope:'Local' -Option:'Private'
     }
@@ -14,8 +26,7 @@ Function Stop-AppProcess {
 
     ForEach ($Program in ($ProgramDirs + $Programs)) {
         If ([String]::IsNullOrEmpty($Program) -eq $False) {
-            $Processes |
-            Where-Object -FilterScript:{$_.Path -match [Regex]::Escape($Program)} |
+            $Processes.Where({$_.Path -match [Regex]::Escape($Program)}) |
             ForEach-Object -Process:{
                 If ($TargetProcesses.Contains($_) -eq $False) {
                     $TargetProcesses.Add($_)
@@ -27,12 +38,12 @@ Function Stop-AppProcess {
 
     ForEach ($TargetProcess in $TargetProcesses) {
         Try {
-            #Stop-Process -id:$TargetProcess.id -Force -ErrorAction Stop
+            Stop-Process -Id:$TargetProcess.id -Force:$Force -WhatIf:$WhatIfPreference -Confirm:$ConfirmPreference
             Write-Output -InputObject "[Info] Successfully stopped process: $(([System.IO.FileInfo]$TargetProcess.Path).name)"
         } Catch {
             Write-Output -InputObject "[Error] Unable to stop process. $(([System.IO.FileInfo]$TargetProcess.Path).name)"
         }
         Clear-Variable -Name:'TargetProcess' -ErrorAction:'SilentlyContinue'
     }
-
 }
+Stop-AppProcess -force -Verbose

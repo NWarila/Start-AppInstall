@@ -60,7 +60,7 @@
     [ValidateSet('Verbose', 'Debug', 'Info', 'Warn', 'Error', 'Fatal', 'Off')]
     [String]$LogLevel = 'Info',
     [ValidateSet('Log', 'Host', 'LogHost', 'Auto')]
-    [String]$LogOutput = 'Auto',
+    [String]$LogOutput = 'Auto'
 )
 
 #region ------ [ AD Domain Controller Query ] ---------------------------------------------------------------------
@@ -71,11 +71,139 @@
 New-Variable -Force -Name:'ScriptConfig' -Value @{
     #Should script enforce running as admin.
     RequireAdmin = $False
+    Debug        = [Bool]$True
 }
 #endregion --- [ Manual Configuration ] ,#')}]#")}]#'")}] ---------------------------------------------------------
 
 #region ------ [ Required Functions ] -----------------------------------------------------------------------------
 Function Stop-AppProcess {
-    
+    [CmdletBinding(
+        ConfirmImpact = 'Medium',
+        SupportsShouldProcess = $True,
+        PositionalBinding = $True,
+        DefaultParameterSetName = 'Programs'
+    )] Param(
+        [Parameter(Mandatory = $True, ParameterSetName = 'Programs')]
+        [Parameter(Mandatory = $False, ParameterSetName = 'ProgramDirs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'Both')]
+        [Array]$Programs,
+        [Parameter(Mandatory = $False, ParameterSetName = 'Programs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'ProgramDirs')]
+        [Parameter(Mandatory = $True, ParameterSetName = 'Both')]
+        [Array]$ProgramDirs,
+        [Switch]$Force
+    )
+
+    Write-Verbose -Message:'Initializing Variables.'
+    @('Processes', 'TargetProcesses') | ForEach-Object -Process: {
+        New-Variable -Name:$_ -Value:$Null -Force -Scope:'Local' -Option:'Private'
+    }
+    Set-Variable -Name:'Processes' -Value:(Get-Process | Where-Object -FilterScript: {
+            [String]::IsNullOrEmpty($_.Path) -ne $True } | Select-Object -Property:'ID', 'Path')
+    Set-Variable -Name:'TargetProcesses' -Value:(New-Object -TypeName:'System.Collections.Generic.List[psobject]')
+
+    ForEach ($Program in ($ProgramDirs + $Programs)) {
+        If ([String]::IsNullOrEmpty($Program) -eq $False) {
+            $Processes.Where({ $_.Path -match [Regex]::Escape($Program) }) |
+            ForEach-Object -Process: {
+                If ($TargetProcesses.Contains($_) -eq $False) {
+                    $TargetProcesses.Add($_)
+                }
+            }
+        }
+        Clear-Variable -Name:'Program' -ErrorAction:'SilentlyContinue'
+    }
+
+    ForEach ($TargetProcess in $TargetProcesses) {
+        Try {
+            Stop-Process -Id:$TargetProcess.id -Force:$Force -WhatIf:$WhatIfPreference -Confirm:$ConfirmPreference
+            Write-Output -InputObject "[Info] Successfully stopped process: $(([System.IO.FileInfo]$TargetProcess.Path).name)"
+        } Catch {
+            Write-Output -InputObject "[Error] Unable to stop process. $(([System.IO.FileInfo]$TargetProcess.Path).name)"
+        }
+        Clear-Variable -Name:'TargetProcess' -ErrorAction:'SilentlyContinue'
+    }
 }
 #endregion --- [ Required Functions ] ,#')}]#")}]#'")}] -----------------------------------------------------------
+
+#region ------ [ Determine Script Environment ] -------------------------------------------------------------------
+New-Variable -Force -Name:'sEnv' -Scope:'Script' -Value @{
+    RunMethod   = [String]::Empty
+    Process     = [System.Diagnostics.Process]::GetCurrentProcess()
+    Interactive = [Bool][Environment]::UserInteractive
+    IsAdmin     = [Bool]$False
+    Script      = [System.IO.FileInfo]$Null
+    PSPath      = [System.IO.FileInfo]$Null
+    Variables   = New-Object -TypeName:'System.Collections.Generic.List[String]'
+}
+
+Write-Verbose -Message:'Determing if script is running with admin token.'
+$sEnv.IsAdmin = (New-Object -TypeName:System.Security.Principal.WindowsPrincipal(
+        [System.Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+    [System.Security.Principal.WindowsBuiltInRole]::Administrator)
+
+Write-Verbose -Message:'Checking to see if script is running interactively.'
+If ($sEnv.Interactive -eq $True) {
+    If ([Regex]::IsMatch($sEnv.Process.CommandLine, ' -(?<Arg>c(?:ommand)?|e(?:c|ncodedcommand)?|f(?:ile)?)[: ]')) {
+        $sEnv.Interactive = $False
+    }
+}
+
+Write-Verbose -Message:'Setting PowerShell path.'
+$sEnv.PSPath = $sEnv.Process.path
+
+IF (Test-Path -Path Variable:PSise) {
+    #Running as PSISE
+    [String]$sEnv.RunMethod = 'ISE'
+    [System.IO.FileInfo]$sEnv.Script = $psISE.CurrentFile.FullPath
+} ElseIF (Test-Path -Path Variable:pseditor) {
+    #Running as VSCode
+    [String]$sEnv.RunMethod = 'VSCode'
+    [System.IO.FileInfo]$sEnv.Script = $pseditor.GetEditorContext().CurrentFile.Path
+} Else {
+    #Running as AzureDevOps or Powershell
+    [String]$sEnv.RunMethod = 'ADPS'
+    IF ($Host.Version.Major -GE 3) {
+        [System.IO.FileInfo]$sEnv.Script = $PSCommandPath
+    } Else {
+        [System.IO.FileInfo]$sEnv.Script = $MyInvocation.MyCommand.Definition
+    }
+}
+
+
+#endregion --- [ Determine Script Environment ] ,#')}]#")}]#'")}] -------------------------------------------------
+
+#region ------ [ Import Configuration File ] ----------------------------------------------------------------------
+@('ConfigFile', 'Config') | ForEach-Object -Process: {
+    New-Variable -Force -Name:$_ -Value:$Null
+}
+
+#Loads the configuration file as a XML object.
+If ($ScriptConfig.Debug) {
+    Set-Variable -Name:'ConfigFile' -Value:"$($sEnv.Script.Directory.fullname)\Test-Application\install.xml"
+} Else {
+    Set-Variable -Name:'ConfigFile' -Value:"$($sEnv.Script.Directory.fullname)\install.xml"
+}
+
+Write-Verbose -Message:'Testing to see if Config file exists.'
+Try {
+    New-Object -TypeName:'System.IO.FileStream' -ArgumentList:(
+        $ConfigFile,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+} Catch {
+    $_.exception.GetType().fullname
+}
+Set-Variable -Name:'Config' -Value:([System.Xml.XmlDocument](
+        New-Object -TypeName System.IO.StreamReader -ArgumentList (
+            [System.io.File]::Open($ConfigFile, 'Open', 'Read', 'ReadWrite')),
+        ([Text.Encoding]::UTF8),
+        $False,
+        '10000'
+    ).ReadToEnd()
+)
+
+
+#endregion --- [ Import Configuration File ] ,#')}]#")}]#'")}] ----------------------------------------------------
