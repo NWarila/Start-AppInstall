@@ -1,0 +1,63 @@
+<AppInstall>
+	<GlobalConfig>
+		<Directory>{$ConfigDir}</Directory>
+		<!-- [String] Install flags to append to all installers. -->
+		<InstallFlags></InstallFlags>
+		<!-- [ScriptBlock] PowerShell script used to test if this AppInstaller should run. -->
+		<!-- Note: Should return True of False -->
+		<FilterScript></FilterScript>
+	</GlobalConfig>
+
+	<Uninstallers>
+		<Uninstaller>
+			<ID>0</ID>
+			<!-- [String] Search String to try to find in registry -->
+			<SearchString></SearchString>
+			<!-- [string] How to search for search string. -->
+			<!-- Options: Simple, Regex, Exact-->
+			<SearchType></SearchType>
+			<!-- [String] Attempts to uninstall installers of specific architectures. -->
+			<!-- Options: x64, x32, Both -->
+			<Architecture></Architecture>
+			<!-- [String] Flags to add to uninstaller. -->
+			<Flags></Flags>
+			<!-- [Bool] Attempt to extract the uninstaller path. -->
+			<URLExtraction></URLExtraction>
+		</Uninstaller>
+	</Uninstallers>
+
+	<Installers>
+		<Installer>
+			<!-- [Int] Order in which installer functions will run. -->
+			<ID>0</ID>
+			<!-- [String] What OS architecture the installer will run under. -->
+			<!-- Options: x64, x32, Both -->
+			<Architecture>x64</Architecture>
+			<!-- [String] What flags should be added to the installer. -->
+			<Flags>/QN</Flags>
+			<!-- [int[]] Comma seperated list of which uninstallers to run and in what order before installing. -->
+			<RunUninstallers></RunUninstallers>
+			<!-- [ScriptBlock] PowerShell script used to test if this installer should run. -->
+			<!-- Note: Should return True of False -->
+			<FilterScript></FilterScript>
+			<!-- Directory path to be added to parent GlobalConfig directory -->
+			<InstallFile>\x64\install.msi</InstallFile>
+		</Installer>
+		<Installer>
+			<!-- [Int] Order in which installer functions will run. -->
+			<ID>1</ID>
+			<!-- [String] What OS architecture the installer will run under. -->
+			<!-- Options: x64, x32, Both -->
+			<Architecture>x32</Architecture>
+			<!-- [String] What flags should be added to the installer. -->
+			<Flags>/QN</Flags>
+			<!-- [int[]] Comma seperated list of which uninstallers to run and in what order before installing. -->
+			<RunUninstallers></RunUninstallers>
+			<!-- [ScriptBlock] PowerShell script used to test if this installer should run. -->
+			<!-- Note: Should return True of False -->
+			<FilterScript></FilterScript>
+			<!-- Directory path to be added to parent GlobalConfig directory -->
+			<InstallFile>\x32\install.msi</InstallFile>
+		</Installer>
+	</Installers>
+</AppInstall>
