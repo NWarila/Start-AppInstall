@@ -22,10 +22,16 @@
             Warn    = Display only warning and error messages.
             Error   = Display only error messages.
             None    = Display absolutely nothing.
+
+    .PARAMETER debug
+        [Switch]
+
     .INPUTS
         None
+
     .OUTPUTS
         None
+
     .NOTES
     VERSION     DATE			NAME						DESCRIPTION
     ___________________________________________________________________________________________________________
@@ -155,6 +161,129 @@ Function Convert-XMLtoPSObject {
     }
     $Result
 }
+Function Test-FilterScript {
+    Param(
+        [Parameter(Mandatory)]
+        [String]$FilterScript,
+        [String]$Object
+    )
+    Write-Verbose -Message:'Initializing Variables.'
+    @('Result') | ForEach-Object -Process: {
+        New-Variable -Name:$_ -Value:$Null -Force
+    }
+
+    Write-Verbose -Message:"Processing: $Object"
+    If ([String]::IsNullOrWhiteSpace($FilterScript) -eq $False) {
+        Write-Verbose -Message:"Object $Object has a value; Testing it."
+        Write-Debug -Message:"$Object`: $FilterScript"
+        Try {
+            Set-Variable -Name:Result -Value:(
+                [Bool](Invoke-Command -NoNewScope -ScriptBlock:(
+                        [ScriptBlock]::Create($FilterScript.Trim())
+                    ))
+            )
+        } Catch {
+            Throw $Error[0]
+            Return
+        }
+    } Else {
+        Write-Verbose -Message:'Object Config.GlobalConfig.FilterScript is blank.'
+    }
+    Return $Result
+}
+Function Start-CimQuery {
+    [CmdletBinding(
+        ConfirmImpact = 'None',
+        DefaultParameterSetName = 'Default',
+        HelpURI = '',
+        SupportsPaging = $False,
+        SupportsShouldProcess = $True,
+        PositionalBinding = $True
+    )]Param (
+        [Parameter(Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ClassName,
+        [Parameter(Position = 1)]
+        [String]$NameSpace = 'root\CIMV2',
+        [Parameter(Position = 2)]
+        [CimSession]$CimSession,
+        [Parameter(Position = 3)]
+        [string[]]$Property = '*',
+        [Parameter(Position = 4)]
+        [Switch]$NewCimSession,
+        [Parameter(Position = 0)]
+        [HashTable]$QuickSetup
+    )
+
+    $Step = [int]1
+    $ErrorActionPreference = 'Stop'
+
+    Write-Debug -Message:("Step $Step` Initalizing Variables Variables"); $Step++
+    @('Result') | ForEach-Object { New-Variable -Name:$_ -Value:$Null }
+    New-Variable -Name:'CimInstSplat' -Value:(@{'Property' = $Property; 'NameSpace' = $NameSpace })
+    New-Variable -Name:'CimProperties' -Value:@('ClassName', 'NameSpace', 'CimSession', 'Property')
+
+
+    Write-Debug -Message:('Step $Step: Quickstep Check.'); $Step++
+    If ($QuickSetup) {
+        ForEach ($Param in $QuickSetup.GetEnumerator()) {
+            Write-Verbose -Message:"ForEach-Param: $($param.Key)"
+            If ($Param.Key -in $CimProperties) {
+                Write-Verbose -Message:('Adding ''{0}'' key with value ''{1}'' to CimInstSplat.' -f
+                    $Param.Key, $Param.Value)
+                $CimInstSplat[$Param.Key] = $Param.Value
+            } Else {
+                Write-Warning -Message:'CimProperty {0} does not match a valid CimSession property.'
+            }
+        }
+        $Null = $PSBoundParameters.Remove('QuickSetup')
+    }
+
+    Write-Debug -Message:("Step $Step` Add PSBound Parameters to CimInstSplat."); $Step++
+    ForEach ($Param in $PSBoundParameters.GetEnumerator()) {
+        If ($Param.Key -in $CimProperties) {
+            Write-Debug -Message:"Adding $($Param.Key) ot `$CimInstSplat."
+            Write-Verbose -Message:('Adding ''{0}'' key with value ''{1}'' to CimInstSplat.' -f
+                $Param.Key, $Param.Value)
+            $CimInstSplat[$Param.Key] = $Param.Value
+        } Else {
+            Write-Debug -Message:"Skipping $($Param.Key); Not in `$CimProperties."
+        }
+    }
+
+
+    Write-Debug -Message:("Step $Step` CimSession Check"); $Step++
+    If (('CimSession' -NotIn $CimInstSplat.keys) -or $NewCimSession) {
+        Write-Verbose -Message:'Attempting to create a DCOM CimSession for LocalHost.'
+        $lMSG = 'Creating LocalCimSession: {0}'
+        $CimInstSplat['CimSession'] = (
+            New-CimSession -ComputerName:'LocalHost' -SessionOption:(
+                New-CimSessionOption -Protocol:'Dcom'
+            )
+        )
+        Write-Debug -Message:($lMSG -f 'Success')
+    }
+
+
+    Write-Debug -Message:("Step $Step`: CimSession Check"); $Step++
+    $lMSG = 'Get-CimInstance command result: {0}'
+    Try {
+        Set-Variable -Name:'Result' -Value:(
+            Get-CimInstance @CimInstSplat | Select-Object -Property $CimInstSplat.Property)
+        Write-Verbose -Message:($lMSG -f 'Success')
+    } Catch [Microsoft.Management.Infrastructure.CimException] {
+        If ($NewCimSession) {
+            Throw $_
+        } Else {
+            Start-CimQuery -QuickSetup:$CimInstSplat -NewCimSession
+        }
+    } Catch {
+        Throw $_
+    }
+    Write-Debug -Message:($lMSG -f 'Success')
+
+    Return $Result
+}
 #endregion --- [ Required Functions ] ,#')}]#")}]#'")}] -----------------------------------------------------------
 
 #region ------ [ Determine Script Environment ] -------------------------------------------------------------------
@@ -224,7 +353,7 @@ IF (Test-Path -Path Variable:PSise) {
 @('ConfigFile','Config') |ForEach-Object -Process:{
     New-Variable -Force -Name:$_ -Value:$Null
 }
-Set-Variable -Name:'Config' -Value:(New-Object -TypeName:'PSCustomObject')
+Set-Variable -Name:'Config' -Value:(New-Object -TypeName:'System.Xml.XmlDocument')
 
 #Loads the configuration file as a XML object.
 If ($ScriptConfig.Debug) {
@@ -241,22 +370,124 @@ If ([System.IO.Directory]::Exists($ConfigFile) -eq $True) {
 
 Write-Verbose -Message:'Attempting to load configuration file. '
 Try {
-    $Config = Convert-XMLtoPSObject -XML:([System.Xml.XmlDocument]((
-        New-Object -TypeName 'System.IO.StreamReader' -ArgumentList:@(
-            (New-Object -TypeName:'System.IO.FileStream' -ArgumentList:@(
-                $ConfigFile,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::Read,
-                [System.IO.FileShare]::Read
-            )),
-            [Text.Encoding]::UTF8,
-            $False,
-            "10000"
-        )
-    ).ReadToEnd())).AppInstall
+    $Config.Load($ConfigFile)
+    $Config = $Config.SelectSingleNode('AppInstall')
 } Catch {
     Throw $_
     break
 }
-
 #endregion --- [ Import Configuration File ] ,#')}]#")}]#'")}] ----------------------------------------------------
+
+#region ------ [ Load System Information ] ------------------------------------------------------------------------
+    @('LocalCimSession','OperatingSystem','ComputerSystem','SystemInformation') | ForEach-Object -Process: {
+        New-Variable -Force -Name:$_ -Value:$Null
+    }
+
+    Write-Verbose -Message:'Loading DCOM CimSession for WMI Queries.'
+    Set-Variable -Name:'LocalCimSession' -Value:(
+        New-CimSession -ComputerName:'localhost' –SessionOption:(
+            New-CimSessionOption –Protocol:'DCOM'
+        )
+    )
+
+    Write-Verbose -Message:'Loading Operating System information.'
+    Set-Variable -Name:'OperatingSystem' -Value:(
+        Start-CimQuery -QuickSetup:@{
+            ClassName  = 'Win32_OperatingSystem';
+            NameSpace  = 'root\CIMV2';
+            Property   = 'BuildNumber', 'Caption', 'Description', 'OSArchitecture', 'OSType', 'Version',
+            'PortableOperatingSystem', 'ProductType'
+            CimSession = $LocalCimSession
+        }
+    )
+
+    Write-Verbose -Message:'Loading ComputerSystem information.'
+    Set-Variable -Name:'ComputerSystem' -Value:(
+        Start-CimQuery -QuickSetup:@{
+            ClassName  = 'Win32_ComputerSystem';
+            NameSpace  = 'root/CIMV2';
+            Property   = 'Manufacturer', 'Model'
+            CimSession = $LocalCimSession
+        }
+    )
+
+    Set-Variable -Name:'SystemInformation' -Value:@{
+        OSName       = [String]::New($OperatingSystem.Caption)
+        OSVersion    = [Version]::Parse($OperatingSystem.Version)
+        OSBuild      = [int]::Parse($OperatingSystem.BuildNumber)
+        OSArch       = [String]::New(($OperatingSystem.OSArchitecture))
+        ProcArch     = [int]::Parse(([IntPtr]::Size * 8))
+        Manufacturer = [String]::New($ComputerSystem.Manufacturer)
+        Model        = [String]::New($ComputerSystem.Model)
+    }
+
+    #Clear-Variable -Name:@('LocalCimSession','OperatingSystem','ComputerSystem') -ErrorAction:'SilentlyContinue'
+#endregion --- [ Load System Information ] ,#')}]#")}]#'")}] -----------------------------------------------------
+
+#region ------ [ Processing Installation ] ------------------------------------------------------------------------
+
+    Write-Verbose -Message:'Processing Config.GlobalConfig.FilterScript.'
+    If ([String]::IsNullOrEmpty($Config.GlobalConfig.FilterScript) -eq $False) {
+        $Config.GlobalConfig.FilterScript = (Test-FilterScript -Object:'$Config.GlobalConfig.FilterScript' `
+            -FilterScript:$Config.GlobalConfig.FilterScript
+        )
+        If ($Config.GlobalConfig.FilterScript -eq $False) {
+            Write-Warning -Message:'Computer does not meet GlobalConfig filter script, exiting.'
+            Return
+        } Else {
+            Write-Verbose -Message:'Computer meets the GlobalConfig filterscript requirement.'
+        }
+    }
+
+    Write-Verbose -Message:'Processing $Config.Installers'
+    If ($Config.Installers.GetElementsByTagName('Installer').Count -gt 0) {
+
+        #IWantToRewrite this section, not consistent format with duplicate IDs check.
+        Write-Verbose -Message:'Verifying installer IDs are valid Integers.'
+        $Config.Installers.Installer.ID |ForEach-Object -Process:{
+            If ([int32]::TryParse($_,[ref]$Null)) {
+                Write-Debug -Message:"ID '$_' is valid Int: $True"
+            } Else {
+                Write-Warning -Message:"ID '$_' is not valid."
+                break
+            }
+        }
+
+        Write-Verbose -Message:'Testing for duplicate IDs.'
+        $InstallerDuplicates = ($Config.Installers.Installer.ID |Group-Object |
+            Where-Object -FilterScript:{$_.count -gt 1})
+
+        If ($InstallerDuplicates.Count -gt 0) {
+            Write-Warning -Message:('Installer nodes with non-unique IDs found: {0}' -f `
+            ($InstallerDuplicates.Name -Join ','))
+            Return
+        }
+
+        Write-Verbose -Message:'Calling installers in order of their ID.'
+        $Config.Installers.Installer |Sort-Object -Property:'ID' |ForEach-Object -Process:{
+
+            Write-Verbose -Message:'Testing for OS Arch matches.'
+            If ($SystemInformation.OSArch -Match @{'x32' = 'Both|86-Bit';'X64'='Both|64-Bit'}[$_.Architecture]) {
+                Write-Verbose -Message:"Installer (ID:$($_.ID)) Arch matches OS Arch."
+            } Else {
+                Write-Verbose -Message:"Installer (ID:$($_.ID)) Arch does not match OS Arch."
+                Break
+            }
+
+            If ([String]::IsNullOrEmpty($_.FilterScript) -NE $True) {
+                If (Test-FilterScript -FilterScript:$_.FilterScript -Object:"$Config.Installers.Installer.$($_.ID)") {
+                    Write-Verbose -Message:'FilterScript: Pass'
+                } Else {
+                    Write-Warning -Message:'FilterScript: Fail'
+                    Break
+                }
+            } Else {
+                Write-Verbose
+            }
+
+        }
+    } Else {
+        Write-Warning -Message:'No ''installer'' nodes found under the ''Installers'' node.'
+    }
+
+#endregion --- [ Processing Installation] ,#')}]#")}]#'")}] -------------------------------------------------------
