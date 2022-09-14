@@ -9,7 +9,7 @@
 	</GlobalConfig>
 
 	<Uninstallers>
-		<Uninstaller1>
+		<Uninstaller>
 			<ID>0</ID>
 			<!-- [String] Search String to try to find in registry -->
 			<SearchString></SearchString>
@@ -23,8 +23,8 @@
 			<Flags></Flags>
 			<!-- [Bool] Attempt to extract the uninstaller path. -->
 			<URLExtraction></URLExtraction>
-		</Uninstaller1>
-		<Uninstaller2>
+		</Uninstaller>
+		<Uninstaller>
 			<ID>0</ID>
 			<!-- [String] Search String to try to find in registry -->
 			<SearchString></SearchString>
@@ -38,7 +38,7 @@
 			<Flags></Flags>
 			<!-- [Bool] Attempt to extract the uninstaller path. -->
 			<URLExtraction></URLExtraction>
-		</Uninstaller2>
+		</Uninstaller>
 	</Uninstallers>
 
 	<Installers>

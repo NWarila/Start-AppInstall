@@ -482,7 +482,7 @@ Try {
                     Break
                 }
             } Else {
-                Write-Verbose
+                Write-Verbose 1
             }
 
         }
