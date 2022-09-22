@@ -130,37 +130,6 @@ Function Stop-AppProcess {
         Clear-Variable -Name:'TargetProcess' -ErrorAction:'SilentlyContinue'
     }
 }
-Function Convert-XMLtoPSObject {
-    Param (
-        $XML
-    )
-    New-Variable -Name:'Result' -Value:(New-Object -TypeName:'PSCustomObject')
-
-    $xml | Get-Member -MemberType:'Property' |
-    Where-Object {
-        $_.MemberType -EQ 'Property'
-    } | ForEach-Object -Process:{
-        $tXML = $_
-        Switch -Regex ($_.Definition) {
-                '^\bstring\b.*$' {
-                    $Result | Add-Member -MemberType:'NoteProperty' -Name:($tXML.Name) -Value:($XML.($tXML.Name))
-                }
-                '^\bSystem\.Object\b\[] (?!#comment).*$' {
-                    Write-Host "SystemObject Baby!"
-                }
-                '^\bSystem.Xml.XmlElement\b.*$' {
-                    $Result | Add-Member -MemberType:'NoteProperty' -Name:($tXML.Name) -Value:(
-                        Convert-XMLtoPSObject -XML:($XML.($tXML.Name))
-                    )
-                }
-                '^\bSystem\.Object\b\[] (#comment).*$' { <# Do Nothing #> }
-            Default {
-                Write-Host "Unrecognized Type: $($tXML.Name)='$($tXML.Definition)'"
-            }
-        }
-    }
-    $Result
-}
 Function Test-FilterScript {
     Param(
         [Parameter(Mandatory)]
@@ -439,6 +408,16 @@ Try {
         }
     }
 
+    Write-Verbose -Message:'Processing Config.GlobalConfig.Directory'
+    If ([String]::IsNullOrEmpty($Config.GlobalConfig.Directory)) {
+        Write-Verbose -Message:'Config.GlobalConfig.Directory is empty, setting to scriptpath.'
+    } Else {
+        If ($Config.GlobalConfig.Directory -Match '{\$ConfigDir}') {
+            $Config.GlobalConfig.Directory = ($Config.GlobalConfig.Directory -Replace
+                '{\$ConfigDir}',$sEnv.Script.Directory.FullName)
+        }
+    }
+
     Write-Verbose -Message:'Processing $Config.Installers'
     If ($Config.Installers.GetElementsByTagName('Installer').Count -gt 0) {
 
@@ -474,7 +453,7 @@ Try {
                 Break
             }
 
-            If ([String]::IsNullOrEmpty($_.FilterScript) -NE $True) {
+            If ([String]::IsNullOrEmpty($_.FilterScript) -eq $False) {
                 If (Test-FilterScript -FilterScript:$_.FilterScript -Object:"$Config.Installers.Installer.$($_.ID)") {
                     Write-Verbose -Message:'FilterScript: Pass'
                 } Else {
@@ -482,8 +461,17 @@ Try {
                     Break
                 }
             } Else {
-                Write-Verbose 1
+                Write-Verbose -Message:'No filter script to check.'
             }
+
+            $_.InstallFile = [IO.Path]::Combine(
+                [String[]](
+                    $Config.GlobalConfig.Directory,
+                    $_.InstallFile
+                )
+            )
+
+            Write-Verbose -Message:'Starting Installation.'
 
         }
     } Else {
